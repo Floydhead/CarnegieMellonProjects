@@ -1,0 +1,339 @@
+---
+title: "Project"
+author: "Sankalp Devasthali"
+date: 'Due Dec 16'
+output: 
+  html_document:
+    toc: true
+    theme: paper
+    highlight: tango
+---
+
+#### 1. Premise
+
+The Pittsburgh region is served by a combined sewer, which collects, conveys, and partially treats both stormwater and wastewater in the same infrastructure system. During periods of heavy rainfall, stormwater can exceed the capacity of combined sewers, which causes overflow into nearby rivers and streams. While these combined sewer overflows or CSO's mitigate upstream flooding, they release untreated wastewater into receiving water bodies. CSO's are regulated by state and federal authorities, thus cost effective strategies to manage CSO's are important for local municipalities. 
+
+Improvements to a green infrastructure - pipes, pumps, storage, and treatment facilities - can increase the capacity of the collection system to accommodate more severe wet weather events. Conversely, a green infrastructure includes features that reduce the stormwater entering the collection system by temporarily retaining or diverting stormwater. Types of green infrastructure vary from completely natural systems, such as converting a parking lot to a park, to single purpose engineered systems, such as pervious paving.
+
+While gray infrastructure strategies involve modifying public property, many green infrastructure strategies involve modifying private property. In particular, both rain gardens and trees involve retrofitting exterior space on private property. There are advantages and disadvantages to these three uses of outdoor space: open space ("grassy yard"), trees, and raingardens. For each of these uses of outdoor spaces, property owners will value differently effects on aesthetics, environmental impacts, maintenance, and outdoor uses (e.g., recreation is feasible on open space but not on a rain garden). Thus, it is important to understand how property owners value these amenities before considering rain gardens and trees as a stormwater management strategy.  
+
+#### 2. Importing the data
+
+I am getting my data from the amazon server provided to us     https://s3.amazonaws.com/aws-website-programminginrforanalytics-tbal0/data/sales_county.csv  
+The files I am using are-:  
+1. sales_county.csv  
+2. assesment_city.csv  
+3. land_use_city.csv  
+4. sewersheds.csv  
+
+```{r read.data, include=FALSE}
+sales_county.orig <- read.csv("https://s3.amazonaws.com/aws-website-programminginrforanalytics-tbal0/data/sales_county.csv", header = TRUE)
+assesment_city.orig <- read.csv("https://s3.amazonaws.com/aws-website-programminginrforanalytics-tbal0/data/assessments_city.csv", header = TRUE)
+land_use_city.orig <- read.csv("https://s3.amazonaws.com/aws-website-programminginrforanalytics-tbal0/data/land_use_city.csv", header = TRUE)
+sewersheds.orig <- read.csv("https://s3.amazonaws.com/aws-website-programminginrforanalytics-tbal0/data/sewersheds.csv", header = TRUE)
+```
+#### 3. Description of information provided
+
+A breif look at the dataset that I will be using to predict the rebate value and the effects of our strategy on the CSO values-:   
+(1) Sales prices for residential properties in Allegheny County   
+(2) Descriptions of residential properties in the City of Pittsburgh   
+(3) Land use data for parcels in the City   
+(4) Sewershed locations for parcels in the City   
+
+```{R, include = FALSE }
+require(ggplot2)
+require(tidyverse)
+require(corrplot)
+require(polycor)
+options(scipen = 4)
+require(MASS)
+```
+
+```{r tidy.data,include = FALSE }
+assesment_city <- na.omit(as.tibble(unique(assesment_city.orig)))
+land_use_city <- na.omit(as.tibble(unique(land_use_city.orig)))
+sales_county <- na.omit(as.tibble(unique(sales_county.orig)))
+sewersheds <- na.omit(as.tibble(unique(sewersheds.orig)))
+
+head(assesment_city)
+head(land_use_city)
+head(sales_county)
+``` 
+  
+A quick explanation of the various columns in the given datas-  
+**Assesment_City**  
+1. PARID - Parcel identifier, ie, a plot of land uniquely identified by a code.  
+2. PROPERTYCITY - The city in which the property exists  
+3. MUNIDESC	- Property municipality  
+4. USEDESC - Approved property use  
+5. LOTAREA - Lot or parcel area in Square Feet  
+6. HOMESTEADFLAG - Indicator for whether the property owner occupies the property.The assumption here is that a property can be occupied by owner (HOM) or renter only.  
+7. CONDITIONDESC - Property condition as assessed by Allegheny County  
+8. BEDROOMS -	Number of bedrooms  
+9. FULLBATHS - Number of full bathrooms  
+10. HALFBATHS -	Number of half bathrooms  
+11. FINISHEDLIVINGAREA - Square feet of living area  
+12. ZIP_CODE -	Property zip code  
+13. census.block.group - Property Census block group  
+14. neighborhood - Property neighborhood  
+  
+**Sales_County**  
+1. PARID - Parcel identifier, ie, a plot of land uniquely identified by a code.  
+2. SALEDATE - Date of sale of given property  
+3. SALEDESC - Type of sale of given property  
+4. PRICE - Price paid  
+  
+**Land_Use_City**  
+1. PARID - Parcel identifier, ie, a plot of land uniquely identified by a code.  
+2. LUnew - Type of land use. "bldgs" indicates land occupied by buildings. "impervious" means impervious cover where water does not penetrate into the land. "trees" and "open.space" are explain the presence of trees on the property  
+3. sqft - Square feet of indicated land use  
+  
+**Sewersheds**  
+1. PARID - Parcel identifier, ie, a plot of land uniquely identified by a code.  
+2. sewershed - Sewershed in which property is located  
+3. CSOperInfl - Ratio of combined sewer overflow reduced for every unit of runoff reduced at the surface  
+
+#### 4. Tidying the data
+
+**For Assesment_city**  
+In the assesment_city data, it can be seen that columns "Hood" and "neighborhood" are copies. Similarly for GEOID10 and census.block.group, we can see that they are identical.  
+So we can remove either of the pairs. I am removing "Hood" and "GEOID10" from my table.  
+```{r checking for redundant columns, include=FALSE}
+identical(assesment_city$HOOD, assesment_city$neighborhood)
+identical(assesment_city$GEOID10, assesment_city$census.block.group)
+```
+  
+The HOMESTEADFLAG stands for whether a home is occupied by it's owner or if it has been rented out, thus, we create a new column "owner.rental" with the respective values.  
+Now, having two separate columns for Bathrooms doesn't make enough sense. Let us combine the two and call it _bathrooms_. A higher weightage is give to the FULLBATHS value as compared to the HALFBATHS value.  
+Also, we will now filter data to only take those values which belong to "residential" properties, ie, remove values related to corporation as given in the _OWNERDESC_.  
+Finally, we will remove values which don't belong to a household as given in the _USERDESC_ column.  
+
+It doesn't make sense to have fields where the values of FINISHEDLIVINGAREA and LOTAREA are not recorded or nill, hence we filter those values in our assesment_city data.  
+```{r modifying data,include = FALSE }
+assesment_city$owner.renter <- ifelse(assesment_city$HOMESTEADFLAG == "HOM", "owner occupied", "rental")
+assesment_city$owner.renter <- factor(assesment_city$owner.renter)
+
+assesment_city$bathrooms <- ifelse(is.na(assesment_city$FULLBATHS), 0, assesment_city$FULLBATHS) + 
+                       ifelse(is.na(assesment_city$HALFBATHS), 0, assesment_city$HALFBATHS/2)
+
+assesment_city <- filter(assesment_city, !(assesment_city$OWNERDESC %in% c("CORPORATION", "CORPORATION-RAILROAD","CORPORATION-UNFINISHED")))
+
+assesment_city <- filter(assesment_city, !(assesment_city$USEDESC %in% c("BARS","COMMERCIAL GARAGE","MUNICIPAL GOVERNMENT","DWG USED AS OFFICE", "MARINA","WAREHOUSE","TOWNHOUSE","VACANT LAND")))
+
+assesment_city <- filter(assesment_city, FINISHEDLIVINGAREA > 0 & LOTAREA > 0)
+assesment_city <- na.omit(assesment_city)
+assesment_city <- droplevels(assesment_city)
+
+sales_county <- filter(sales_county, SALEDESC %in% c("VALID SALE","OTHER VALID","CHANGED AFTER SALE"))
+sales_county <- filter(sales_county, PRICE > 1)
+```
+  
+**Sales_County**  
+  
+For the sales_county data, we only want valid sales where the price paid was significant and hence we filter on the basis of _SALESDESC_ to only take values which pertain to a valid sale.
+
+```{r selecting relevant columns, include = FALSE }
+assesment_city <- dplyr::select(assesment_city, -HOMESTEADFLAG, -FULLBATHS, - HALFBATHS, -HOOD, -OWNERDESC,-SCHOOLDESC, -GEOID10, -census.block.group)
+```
+
+Finally, we drop all the irrelevant columns as they don't have any effect on the price of a plot. Columns removed are - HOMESTEADFLAG, FULLBATHS, HALFBATHS, HOOD, OWNERDESC,SCHOOLDESC, GEOID10, census.block.group.  
+
+  
+**Merging Data**
+
+```{r merging, include = FALSE }
+merged.data <- merge(x = assesment_city, y = sales_county, by = c("PARID"))
+merged.data <- merge(x = merged.data ,y = land_use_city , by = c("PARID"))
+```
+
+Now we merge data from the assesment_city dataset and sales_county dataset with land_use_city dataset.
+We can see that the common ID is the PARID.
+  
+**Further Tidying**
+
+```{r filtering duplicates and NAs, include = FALSE }
+merged.data <- na.omit(merged.data)
+
+merged.data$SALEDATE <- as.Date.factor(as.character(merged.data$SALEDATE))
+latest <- aggregate(merged.data$SALEDATE,by=list(merged.data$PARID),max)
+colnames(latest) <- c("PARID","SALEDATE")
+merged.data <- merge(x = merged.data, y = latest, by = c("PARID","SALEDATE"))
+
+merged.data$LOTAREA <- as.numeric(merged.data$LOTAREA)
+merged.data$BEDROOMS <- as.numeric(merged.data$BEDROOMS)
+merged.data$FINISHEDLIVINGAREA <- as.numeric(merged.data$FINISHEDLIVINGAREA)
+merged.data$CONDITIONDESC <- as.factor(merged.data$CONDITIONDESC)
+```
+
+Some of the Properties have multiple _SALEDATEs_. We are only concerned about the latest one. Thus, we filter the data and keep only the latest saledates.
+
+```{r arranging for regression, include = FALSE }
+##Spreading variables for Land Use Pattern
+merged.data<-spread(merged.data, key = LUnew, value = sqft)
+merged.data[is.na(merged.data)]<-0
+merged.data$ZIP_CODE <- as.factor(merged.data$ZIP_CODE)
+
+panel.cor <- function(x, y, digits = 2, prefix = "", cex.cor, ...)
+{
+    usr <- par("usr"); on.exit(par(usr))
+    par(usr = c(0, 1, 0, 1))
+    require(polycor)
+    r <- abs(cor(x, y))
+    txt <- format(c(r, 0.123456789), digits = digits)[1]
+    txt <- paste0(prefix, txt)
+    if(missing(cex.cor)) cex.cor <- 0.8/strwidth(txt)
+    text(0.5, 0.5, txt, cex = pmax(1, cex.cor * r))
+}
+```
+  
+Finally, let us check whether there is a significant difference in the prices of houses for rental and for houses which the owners are the occupants  
+```{r, echo=FALSE, warning=FALSE}
+ggplot(merged.data) + aes(PRICE, color = CONDITIONDESC) + geom_histogram() + facet_grid(~ owner.renter)
+```
+  
+It can be safely said that the spread of houses is similar for either type - renter or owner occupied. There is similarity in the prices and the conditions and the skew is on the left side.
+  
+The questions we want to answer are whether the residents of Pittsburgh favour open spaces or trees. Since we have data about the usage of trees and open spaces (in square feet) for various properties, let us spread the data in order to regress.  
+  
+The final dataset that we use to answer our questions is - 
+```{r, echo=FALSE}
+summary(merged.data)
+```
+  
+#### 5. Plots
+
+To see how the final data is correlated to each other, we shall use a CORRPLOT.
+
+```{r correlation, include=FALSE}
+merged.data.plot <- dplyr::select(merged.data, 
+        -PARID,
+        -SALEDATE,
+        -PROPERTYCITY,
+        -MUNIDESC,
+        -YEARBLT,
+        -SALEDESC,
+        -neighborhood,
+        -USEDESC,
+        -CONDITIONDESC,
+        -ZIP_CODE
+        )
+```
+```{r, echo=FALSE}
+corrplot(hetcor(data = merged.data.plot)$correlations)
+```
+
+From the plot above, we can see that Price is correlated to lotarea, finishedlivingarea, bedrooms, bathrooms, bldgs and trees.  
+This may lead us to believe that our regression should include the aforementioned independent variables to get an estimate for the percieved value of trees and open space for residents of Pittsburgh. This is a wrong assumption.  
+BEDROOMS is correlated with FINISHEDLIVINGAREA and bldgs.  
+Thus, we can remove these estimators and still get a gainful regression with sufficient power to give us an answer to our questions. Removing unimportant variables and running the following regression, we get-:
+
+```{r regression}
+regression <- lm(formula = (PRICE/LOTAREA) ~ 
+                   open.space + 
+                   trees +
+                   USEDESC + 
+                   CONDITIONDESC + 
+                   FINISHEDLIVINGAREA + 
+                   neighborhood
+                   , data = merged.data)
+plot(regression, which = 1)
+```
+
+```{r, echo=FALSE}
+reg.sum<-summary(regression)
+reg.sum <- as.data.frame(reg.sum$coefficients)
+head(reg.sum, 3)
+```
+
+#### 6. Interpretation  
+We shall concern ourselves with the variables under consideration - trees and open.space.  
+  
+**trees** - when controlling for the condition for the residential houses, having similar living areas and open spaces and neighborhood, on an average, the value of a property per square feet decreases by $0.0017 for every increase in square feet of trees. This estimate is statistically significant.  
+  
+**open.space** - when controlling for the condition for the residential houses, having similar living areas and tree count and neighborhood, on an average, the value of a property per square feet decreases by $0.0037 for every increase in square feet of open space. This estimate is statistically significant.  
+
+As can be seen, people don't value trees nor open space.
+
+#### 7. Estimating the rebate amount
+
+The rebate will be calculated as compensation for the use of private property plus installation costs. 
+As the perceived value of trees and open spaces is "negative" and "negative", respectively, we need to provide incentive to the household owners of Pittsburgh to plant trees in their yards. Following is a table which summarises the parameters to calculate rebate amount.
+
+|  Amenity     | Diameter | Installation cost      |
+|--------------|----------|------------------------|
+| Trees        | 25 ft    | $20 per tree           |
+| Rain gardens | NA       | $6 per square foot     |  
+
+**Rebate for trees**  
+The coefficient for trees is `r summary(regression)$coefficients[3]`. We multiply this with (pi x (diameter/2)^2) and add USD 20 to find the cost of putting a tree in a property. 
+Thus, it is `r (0.0017*3.14*12.5*12.5)+20`$
+
+**Rebate for open space**  
+Since we don't have to incentivize converting open spaces to rainwater sheds, the rebate amount is simply 6$ per square foot.
+
+##### 8. Stormwater performance
+
+The following are mean installation costs and stormwater performance data.
+
+|  Amenity     | Stormwater performance                       | 
+|--------------|----------------------------------------------|
+| Trees        | 1000 gallons of runoff reduced per tree      |
+| Rain gardens | 3.5 gallons of runoff reduced per square foot|
+  
+To find the most cost effective sewershed, we will merge sewersheds data with the current dataset on the common column "PARID". We then sum up the values of combined runoff reduced per square foot over all the sewerids.  
+The top 5 cost-effective sewerids are -
+  
+```{r, include=FALSE}
+merged.data <- merge(x = merged.data, y = sewersheds, by = c("PARID"))
+
+merged.data <- filter(merged.data, merged.data$CSOperInfl != 0)
+merged.data$treeCSO <- (((0.0017*3.14*12.5*12.5)+20)/(1000*merged.data$CSOperInfl))
+merged.data$open.space.CSO <- ((6)/(3.5*merged.data$CSOperInfl))
+merged.data$combinedCSOvals <- merged.data$treeCSO + merged.data$open.space.CSO
+merged.data <- dplyr::select(merged.data, -treeCSO, -open.space.CSO)
+
+m.d.gb <- group_by(merged.data, sewershed) %>%
+                    summarise(sum.per.cso = sum(combinedCSOvals))
+
+m.d.gb <- arrange(m.d.gb, -sum.per.cso) %>% head(5)
+```
+```{r, echo=FALSE}
+m.d.gb
+```
+
+#### 9. Conclusion
+  
+We imported publicly available dataset for the city of Pittsburgh which included data about property sales, sewersheds, the usage of land, and plots in the city. We trimmed the data, stripping it of duplicate, redundant, unnecessary data. Thereafter, we answered 4 questions -  
+(1) How much do residential property owners value - if at all - exterior open space?  
+(2) How much do residential property owners value - if at all - trees?  
+(3) What is the mean rebate per square foot of rain garden and per tree the municipality should offer property owners to incentivize their installation?  
+(4) The five areas of the city (sewersheds) that are the most cost effective at reducing combined sewer overflows? 
+
+The people of Pittsburgh value trees and open spaces of their property negatively, hence we have to incentivise the inclusion of trees in their property. We found mean rebate values for planting trees and putting rainwater sheds. We also found the top 5 most effective sewersheds, which are-:   
+1. M-29  
+2. A-41/121H001-OF  
+3. A-42  
+4. A-22  
+5. O-27  
+
+####  REFERENCES
+
+Blackhurst. MF. (2017). "Parcel Scale Green Infrastructure Siting and Cost Effectiveness Analysis." http://sb.ucsur.pitt.edu/green-infrastructure/"
+
+Allegheny County. Allegheny County Urban Tree Canopy. Division of Computer Services Geographic Information Systems Group, 2010. http://www.pasda.psu.edu/uci/MetadataDisplay.aspx?entry=PASDA&file=AlleghenyCountyUrbanTreeCanopy2010.xml&dataset=1203.com"
+
+"Allegheny County Wooded Areas. Division of Computer Services Geographic Information Systems Group, 2011. http://www.pasda.psu.edu/uci/MetadataDisplay.aspx?entry=PASDA&file=AlleghenyCounty_WoodedAreas2011.xml&dataset=1228.com"
+
+"Allegheny County Property Assessments." https://data.wprdc.org/dataset/property-assessments.com"
+
+"Allegheny County Property Sale Transactions." https://data.wprdc.org/dataset/real-estate-sales.com"
+
+"City of Pittsburgh. Parcels. Geographic Data, 2015. http://pittsburghpa.gov/dcp/gis/gis-data-new.com"
+
+"Street Curbs. Geographic Data, 2015. http://pittsburghpa.gov/dcp/gis/gis-data-new.com"
+
+"PWSA (Pittsburgh Water and Sewer Authority). 2016. Sewershed Overview Map. http://www.arcgis.com/home/webmap/viewer.html?webmap=f96943c1e46e48dcad9abe5282bc58a8&extent=-80.2691,40.3363,-79.7621,40.5663"
+
+"tidyverse.org. http://tidyr.tidyverse.org/"  
+"rpubs.com. https://rpubs.com/bradleyboehmke/data_wrangling"
+
